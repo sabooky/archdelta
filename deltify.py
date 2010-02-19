@@ -2,34 +2,23 @@
 import sys
 import os.path
 import subprocess
-import tarfile
 from glob import glob
 from itertools import groupby
 from multiprocessing import Pool
 
 
-def pkg_sort_key(pkg):
-    pkginfo = tarfile.open(pkg).extractfile('.PKGINFO')
-    for line in pkginfo:
-        if line.startswith('builddate = '):
-            date = line.strip().split(' = ')[1]
-            if date.isdigit():
-                return int(date)
-            return 0
-
-delta_sort_key = lambda x: os.path.getmtime(x)
-
 def group_pkgs(pkg_list, delta_list):
     keyfunc = lambda x: os.path.basename(x.rsplit('-', 3)[0])
+    sort_key = lambda x: os.path.getmtime(x)
     s_pkg_list = sorted(pkg_list, key=keyfunc)
     name2pkgs = {}
     for k, g in groupby(s_pkg_list, keyfunc):
-        name2pkgs.setdefault(k, {})['pkg_list'] = sorted(g, key=pkg_sort_key)
+        name2pkgs.setdefault(k, {})['pkg_list'] = sorted(g, key=sort_key)
 
     d_keyfunc = lambda x: os.path.basename(x.rsplit('-', 4)[0])
     s_delta_list = sorted(delta_list, key=d_keyfunc)
     for k, g in groupby(s_delta_list, d_keyfunc):
-        name2pkgs.setdefault(k, {})['delta_list'] = sorted(g, key=delta_sort_key)
+        name2pkgs.setdefault(k, {})['delta_list'] = sorted(g, key=sort_key)
     return name2pkgs
 
 def create_delta(old, new, delta):
@@ -78,7 +67,6 @@ def create_deltas(pkg_info, delta_dir, delta_cnt):
 
             delta_size += os.path.getsize(delta)
             if delta_size > pkg_size * 0.7:
-                print "Delta size too big: %s" % delta
                 break
 
     if not failed:
@@ -87,6 +75,7 @@ def create_deltas(pkg_info, delta_dir, delta_cnt):
         for delta in delta_list[::-1]:
             size += os.path.getsize(delta)
             if size > pkg_size * 0.7 and delta not in delete_list:
+                print "Delta size too big: %s" % delta
                 delete_list.append(delta)
 
         delete_list += pkg_list[:-1]
@@ -102,7 +91,6 @@ def create_deltas_mp(args):
 
 # variables/parse user input
 NUM_DELTAS = 3
-exclude = ['glest-data-3.2.1-2-any.pkg.tar.gz']
 dir = sys.argv[1]
 delta_dir = os.path.join(dir, 'deltas')
 if not os.path.isdir(delta_dir):
@@ -113,26 +101,9 @@ pkg_list = glob(os.path.join(dir, '*-i686.pkg.tar.gz'))
 pkg_list += glob(os.path.join(dir, '*-x86_64.pkg.tar.gz'))
 pkg_list += glob(os.path.join(dir, '*-any.pkg.tar.gz'))
 delta_list = glob(os.path.join(delta_dir, '*.delta'))
-for item in exclude:
-    pkg = os.path.join(dir, item)
-    delta = os.path.join(delta_dir, item)
-    if pkg in pkg_list:
-        pkg_list.remove(pkg)
-    if delta in delta_list:
-        delta_list.remove(delta)
-name2pkgs = group_pkgs(pkg_list, delta_list)
 
-# clean up anything not in db
-db_list = glob(os.path.join(dir, '*.db.tar.gz'))
-valid = set()
-for db in db_list:
-    valid.update(set(x.rsplit('-', 2)[0] for x in tarfile.open(db).getnames() if '/' not in x))
-for name in set(name2pkgs.keys()) - valid:
-    for pkg in reduce(lambda x,y: x+y, name2pkgs[name].values()):
-        print "deleting: %s" % pkg
-        os.unlink(pkg)
-    else:
-        del name2pkgs[name]
+# group pkgs/deltas by name
+name2pkgs = group_pkgs(pkg_list, delta_list)
 
 # create deltas
 p = Pool()
