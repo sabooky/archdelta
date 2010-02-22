@@ -16,11 +16,13 @@ gen_metalink() {
     <files>'
     # add files
     bsdtar xOf $repo_db '*/desc' |
-    awk '/%FILENAME%/{fn=$2} /%MD5SUM%/{ md=$2 } /%CSIZE%/{ sz=$2 }
-         fn&&md&&sz{ print fn" "md" "sz;fn="";md="";sz="" }' RS= |
-    while read name md5sum size;do
+    awk '/%NAME%/{n=$2} /%FILENAME%/{fn=$2} /%MD5SUM%/{md=$2} /%CSIZE%/{sz=$2}
+         n&&fn&&md&&sz{ print n" "fn" "md" "sz;n="";fn="";md="";sz="" }' RS= |
+    while read name fname md5sum size;do
+        # skip excludes
+        echo "$exclude" | egrep -q "\b$name\b" && continue
         echo -n "
-        <file name='$name'>
+        <file name='$fname'>
            <size>$size</size>
            <verification>
                <hash type='md5'>$md5sum</hash>
@@ -28,7 +30,7 @@ gen_metalink() {
            <resources>"
         for mirror in "${mirrors[@]}";do
             echo -n "
-                <url type='${mirror%%:*}'>$(eval echo $mirror)/$name</url>"
+                <url type='${mirror%%:*}'>$(eval echo $mirror)/$fname</url>"
         done
         echo -n "
             </resources>
@@ -39,9 +41,12 @@ gen_metalink() {
 </metalink>"
 }
 
-mirrors=( $(reflector -h 1 -r|awk '/^[^#]/&&$0=$3') )
+mirrors=( $(reflector -h 2 -l 10 -r|awk '/^[^#]/&&$0=$3') )
+repos="core extra community"
+#repos="community"
+exclude="vimpager"
 
-for repo in core extra community;do
+for repo in $repos;do
     repo_path=$repo/os/i686
     local_repo=/var/repos/$repo_path
     repo_db=$repo.db.tar.gz
@@ -50,12 +55,12 @@ for repo in core extra community;do
     [[ ! -d $local_repo ]] && mkdir -p $local_repo
     # get db file
     pushd $local_repo
-    [[ -f $repo_db ]] && old_stat=$(stat $repo_db)
+    [[ -f $repo_db ]] && old_stat=$(stat -L -c '%Y %s %n' *)
     wget -N "$mirror/$repo_db"
-    # check for changes
-    [[ $old_stat = $(stat $repo_db) ]] && continue
     # dl packages
-    aria2c -M <(gen_metalink $repo_db)
+    aria2c --auto-file-renaming=false -M <(gen_metalink $repo_db)
+    # check for changes
+    [[ $old_stat = $(stat -L -c '%Y %s %n' *) ]] && continue
     # create deltas
     deltify.py .
     # create delta db
@@ -66,5 +71,4 @@ for repo in core extra community;do
     lftp -e "mirror -Rve -P2 . $repo/os/i686;exit;" $my_user:$my_pass@$my_mirror/archdelta.net
     popd
     popd
-    break
 done
