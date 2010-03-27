@@ -6,7 +6,7 @@ set -e
 my_mirror=archdelta.net
 my_user=xXxXxXxXxXx
 my_pass=xXxXxXxXxXx
-PATH="/home/xXxXxXxXxXx/sandbox/myprojects/pac_delta_repo/bin:$PATH"
+PATH="$(cd $(dirname $0);pwd):$PATH"
 
 gen_metalink() {
     local repo_db=$1
