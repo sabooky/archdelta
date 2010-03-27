@@ -6,7 +6,7 @@ set -e
 my_mirror=archdelta.net
 my_user=xXxXxXxXxXx
 my_pass=xXxXxXxXxXx
-PATH="$(pwd):$PATH"
+PATH="/home/xXxXxXxXxXx/sandbox/myprojects/pac_delta_repo/bin:$PATH"
 
 gen_metalink() {
     local repo_db=$1
@@ -40,9 +40,9 @@ gen_metalink() {
     </files>
 </metalink>"
 }
-
+date
 mirrors=( $(reflector -h 2 -l 10 -r|awk '/^[^#]/&&$0=$3') )
-repos="core extra community"
+repos="core extra community testing community-testing"
 #repos="community"
 exclude="vimpager"
 
@@ -72,3 +72,4 @@ for repo in $repos;do
     popd
     popd
 done
+date

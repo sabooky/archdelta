@@ -2,13 +2,14 @@
 import sys
 import os.path
 import subprocess
+import gzip
 from glob import glob
 from itertools import groupby
 from multiprocessing import Pool
 
 
 def group_pkgs(pkg_list, delta_list):
-    keyfunc = lambda x: os.path.basename(x.rsplit('-', 3)[0])
+    keyfunc = lambda x: os.path.basename(x.rsplit('-', 3)[0]).strip()
     sort_key = lambda x: os.path.getmtime(x)
     s_pkg_list = sorted(pkg_list, key=keyfunc)
     name2pkgs = {}
@@ -22,14 +23,13 @@ def group_pkgs(pkg_list, delta_list):
     return name2pkgs
 
 def create_delta(old, new, delta):
-    delta_fh = open(delta, 'w')
-    p1 = subprocess.Popen(["xdelta3", "-q0fs", old, new], stdout=subprocess.PIPE,
+    p1 = subprocess.Popen(["xdelta3", "-q9fs", old, new], stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE)
-    p2 = subprocess.Popen(["xz", "-c"], stdin=p1.stdout, stdout=delta_fh)
+    delta_fh = gzip.open(delta, 'wb')
+    delta_fh.writelines(p1.stdout)
     ret1 = p1.wait()
-    ret2 = p2.wait()
     delta_fh.close()
-    return (ret1 + ret2) == 0
+    return ret1 == 0
 
 def create_deltas(pkg_info, delta_dir, delta_cnt):
     pkg_list = pkg_info.get('pkg_list', [])
@@ -38,11 +38,12 @@ def create_deltas(pkg_info, delta_dir, delta_cnt):
     pkg_offset = delta_cnt
     if pkg_list_len <= delta_cnt + 1:
         pkg_offset = pkg_list_len - 1
+    if delta_cnt == 0:
+        pkg_offset = pkg_list_len - 1
     pkg_size = os.path.getsize(pkg_list[-1])
-    delta_size = 0
     failed = False
     if pkg_list_len > 1:
-        for i in range(pkg_list_len-pkg_offset, pkg_list_len)[::-1]:
+        for i in range(pkg_list_len-pkg_offset, pkg_list_len):
             old = pkg_list[i-1]
             new = pkg_list[i]
             old_s = os.path.basename(old).rsplit('-', 3)
@@ -64,10 +65,6 @@ def create_deltas(pkg_info, delta_dir, delta_cnt):
                     print "failed to create delta from %s => %s" % (old, new)
                     failed = True
                     break
-
-            delta_size += os.path.getsize(delta)
-            if delta_size > pkg_size * 0.7:
-                break
 
     if not failed:
         delete_list = delta_list[:-delta_cnt]
@@ -97,9 +94,13 @@ if not os.path.isdir(delta_dir):
     os.mkdir(delta_dir)
 
 # search for pkgs
-pkg_list = glob(os.path.join(dir, '*-i686.pkg.tar.gz'))
-pkg_list += glob(os.path.join(dir, '*-x86_64.pkg.tar.gz'))
-pkg_list += glob(os.path.join(dir, '*-any.pkg.tar.gz'))
+patterns = ('*-i686.pkg.tar.gz', '*-x86_64.pkg.tar.gz', '*-any.pkg.tar.gz',
+            '*-i686.pkg.tar.bzip2', '*-x86_64.pkg.tar.bzip2', '*-any.pkg.tar.bzip2',
+            '*-i686.pkg.tar.xz', '*-x86_64.pkg.tar.xz', '*-any.pkg.tar.xz',
+            )
+pkg_list = []
+for pat in patterns:
+    pkg_list += glob(os.path.join(dir, pat))
 delta_list = glob(os.path.join(delta_dir, '*.delta'))
 
 # group pkgs/deltas by name
@@ -107,7 +108,9 @@ name2pkgs = group_pkgs(pkg_list, delta_list)
 
 # create deltas
 p = Pool()
-p.map(create_deltas_mp, [(pkg_info, delta_dir, NUM_DELTAS) for pkg_info in name2pkgs.values()])
+p.map(create_deltas_mp, [(pkg_info, delta_dir, NUM_DELTAS) for name, pkg_info in sorted(name2pkgs.iteritems())])
+
+# non threaded for debugging
 #for name, pkgs in name2pkgs.iteritems():
 #    print "processing: %s" % name
 #    create_deltas(pkgs, delta_dir, NUM_DELTAS)
